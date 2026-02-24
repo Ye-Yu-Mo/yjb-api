@@ -331,25 +331,37 @@ def list_accounts(client: YJBClient):
     print("-" * 60)
 
     try:
-        data = client.get('/user_account')
-        accounts = data.get('list', [])
+        # 获取账户列表（基本信息）
+        user_data = client.get('/user_account')
+        accounts = user_data.get('list', [])
 
         if not accounts:
             print("暂无账户")
             return
 
+        # 获取账户收益数据
+        collect_data = client.get('/account_collect')
+        account_data = collect_data.get('account_data', [])
+
+        # 构建 account_id -> 收益数据的映射
+        income_map = {acc['account_id']: acc for acc in account_data}
+
         for acc in accounts:
             acc_id = acc.get('id', 'N/A')
             title = acc.get('title', 'N/A')
-            income = acc.get('today_income', 0)
-            rate = acc.get('today_income_rate', 0)
+            count = acc.get('count', 0)
+
+            # 从收益数据中获取
+            income_data = income_map.get(acc_id, {})
+            income = income_data.get('today_income', 0)
+            rate = income_data.get('today_income_rate', 0)
 
             try:
                 income_float = float(income)
                 rate_float = float(rate)
-                print(f"ID: {acc_id:5s}  {title:20s}  收益: ¥{income_float:>8.2f}  {rate_float:+.2f}%")
+                print(f"ID: {acc_id:<10}  {title:20s}  持仓: {count:2d}  收益: ¥{income_float:>8.2f}  {rate_float:+.2f}%")
             except:
-                print(f"ID: {acc_id:5s}  {title:20s}  收益: {income}  {rate}")
+                print(f"ID: {acc_id:<10}  {title:20s}  持仓: {count:2d}  收益: {income}  {rate}")
 
     except Exception as e:
         print(f"获取账户列表失败: {e}")
