@@ -1,3 +1,5 @@
+
+
 # 养基宝 Python 工具
 
 一个用于查询养基宝基金收益的命令行工具。
@@ -99,6 +101,7 @@ python3 yjb_tool.py --notice
 --accounts           列出所有账户
 --holdings ID        查看账户持仓
 --income-chart       查看收益曲线
+--income-data [ID]   查看收益数据（不指定ID则查看汇总）
 --notice             查看系统公告
 --debug              显示详细调试信息
 ```
