@@ -8,6 +8,7 @@ import json
 import os
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -19,8 +20,15 @@ except ImportError:
     sys.exit(1)
 
 # 常量
-API_BASE = "http://browser-plug-api.yangjibao.com"
+# 老接口：浏览器插件接口，当前默认使用，稳定可用
+OLD_API_BASE = "http://browser-plug-api.yangjibao.com"
+# 新接口：App 接口，部分接口需要 App 端 secret；目前先用同一套签名，能通的先通
+NEW_API_BASE = "https://app-api.yangjibao.com"
+# 默认 API，保留老接口作为 backup
+API_BASE = OLD_API_BASE
 SECRET = "YxmKSrQR4uoJ5lOoWIhcbd7SlUEh9OOc"
+# 新接口 secret 暂用同一个，等解包后如果不同再替换
+NEW_SECRET = SECRET
 TOKEN_FILE = Path.home() / ".yjb_token.json"
 
 
@@ -53,7 +61,7 @@ def save_token(token: str):
 
 
 # API 签名
-def generate_sign(path: str, token: str, timestamp: int) -> str:
+def generate_sign(path: str, token: str, timestamp: int, secret: str = SECRET) -> str:
     """生成 API 签名"""
     pathname = ""  # API base 的路径部分，这里是空字符串
     token = token or ""
@@ -61,7 +69,7 @@ def generate_sign(path: str, token: str, timestamp: int) -> str:
     # 如果 path 包含查询参数，签名时只用路径部分
     sign_path = path.split('?')[0] if '?' in path else path
 
-    sign_str = pathname + sign_path + token + str(timestamp) + SECRET
+    sign_str = pathname + sign_path + token + str(timestamp) + secret
     return hashlib.md5(sign_str.encode()).hexdigest()
 
 
@@ -69,9 +77,11 @@ def generate_sign(path: str, token: str, timestamp: int) -> str:
 class YJBClient:
     """养基宝 API 客户端"""
 
-    def __init__(self, token: Optional[str] = None, debug: bool = False):
+    def __init__(self, token: Optional[str] = None, debug: bool = False, api: str = "old"):
         self.token = token or ""
         self.debug = debug
+        self.api = api
+        self.base = OLD_API_BASE if api == "old" else NEW_API_BASE
         self.session = requests.Session()
         self.session.headers.update({
             'Content-Type': 'application/json'
@@ -79,15 +89,28 @@ class YJBClient:
 
     def request(self, method: str, path: str, **kwargs) -> Dict[str, Any]:
         """发送 API 请求"""
-        url = API_BASE + path
+        url = self.base + path
         timestamp = int(time.time())
-        sign = generate_sign(path, self.token, timestamp)
+        secret = SECRET if self.api == "old" else NEW_SECRET
+        sign = generate_sign(path, self.token, timestamp, secret)
 
+        # App 新接口的 Authorization 是 ios:token，老接口是纯 token
+        auth_value = f"ios:{self.token}" if self.api == "new" else self.token
         headers = {
             'Request-Time': str(timestamp),
             'Request-Sign': sign,
-            'Authorization': self.token
+            'Authorization': auth_value
         }
+
+        # 新接口尽量贴近 App 的请求头，降低被风控的概率
+        if self.api == "new":
+            headers.update({
+                'Accept': '*/*',
+                'Accept-Language': 'zh-Hans-CN;q=1.0, en-CN;q=0.9',
+                'Accept-Encoding': 'gzip, deflate',
+                'User-Agent': 'YJB/2.0.13 (com.xiaoduotou.yjb; build:975; iOS 26.5.0) Alamofire/5.10.2 iPad8,6',
+                'Cookie': 'cna=1c1bb34ac9014f8ab07e6e9943d98cb9',
+            })
 
         if self.debug:
             print(f"\n[DEBUG] {method} {path}")
@@ -237,6 +260,46 @@ def qrcode_login(debug: bool = False) -> str:
 
     print("登录超时，请重试")
     sys.exit(1)
+
+
+# 新接口手机验证码登录
+def sms_login(phone: str, debug: bool = False) -> str:
+    """App 新接口手机验证码登录"""
+    # 登录前 App 会先生成一个设备标识作为临时 token
+    device_id = str(uuid.uuid4()).upper()
+    client = YJBClient(token=device_id, api="new", debug=debug)
+
+    print(f"正在向 {phone} 发送验证码...")
+    try:
+        client.post('/send_code', json={"phone": phone})
+    except Exception as e:
+        print(f"错误：发送验证码失败: {e}")
+        sys.exit(1)
+
+    code = input("请输入收到的验证码: ").strip()
+    if not code:
+        print("错误：验证码不能为空")
+        sys.exit(1)
+
+    print("正在登录...")
+    try:
+        data = client.post('/login', json={
+            "phone": phone,
+            "mode": "phone",
+            "verify_code": code,
+            "invite_code": "",
+            "is_band_wechat": 1,
+        })
+        token = data.get('token')
+        if not token:
+            print("错误：登录成功但未获取到 token")
+            sys.exit(1)
+        print("✅ 登录成功！")
+        save_token(token)
+        return token
+    except Exception as e:
+        print(f"错误：登录失败: {e}")
+        sys.exit(1)
 
 
 # 业务功能
@@ -499,17 +562,378 @@ def show_income_data(client: YJBClient, account_id: Optional[str] = None):
         print(f"获取收益数据失败: {e}")
 
 
+# ========== 新接口（app-api）功能 ==========
+def show_new_user(client: YJBClient):
+    """新接口：当前用户信息"""
+    print("\n👤 用户信息")
+    print("-" * 60)
+    try:
+        data = client.get('/users/v1/account')
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+    except Exception as e:
+        print(f"获取用户信息失败: {e}")
+
+
+def show_new_accounts(client: YJBClient):
+    """新接口：基金账户列表"""
+    print("\n📋 新接口账户列表")
+    print("-" * 60)
+    try:
+        data = client.get('/users/v1/user-account')
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+    except Exception as e:
+        print(f"获取账户列表失败: {e}")
+
+
+def show_new_index(client: YJBClient):
+    """新接口：指数行情"""
+    print("\n📈 新接口指数行情")
+    print("-" * 60)
+    try:
+        data = client.get('/market/v1/quote/index-data')
+        if isinstance(data, list):
+            for item in data:
+                code = item.get('code', 'N/A')
+                name = item.get('name', 'N/A')
+                v = item.get('v', 'N/A')
+                dir_val = item.get('dir', 'N/A')
+                print(f"{code:12s} {name:10s} {v:>12}  {dir_val:+.2f}%")
+        else:
+            print(json.dumps(data, ensure_ascii=False, indent=2))
+    except Exception as e:
+        print(f"获取指数行情失败: {e}")
+
+
+def show_new_search_fund(client: YJBClient, keyword: str):
+    """新接口：搜索基金"""
+    print(f"\n🔍 新接口搜索基金: {keyword}")
+    print("-" * 60)
+    try:
+        data = client.post('/content/v1/search/fund', json={"keyword": keyword})
+        funds = data.get('funds', []) if isinstance(data, dict) else []
+        if not funds:
+            print("未找到相关基金")
+            return
+        for fund in funds:
+            code = fund.get('code', 'N/A')
+            fund_id = fund.get('fund_id', 'N/A')
+            name = fund.get('name', 'N/A')
+            print(f"ID: {fund_id:<10}  {code:8s}  {name}")
+    except Exception as e:
+        print(f"搜索失败: {e}")
+
+
+def _new_first_account_id(client: YJBClient) -> Optional[str]:
+    """获取新接口第一个基金账户 ID"""
+    data = client.get('/users/v1/user-account')
+    accounts = data.get('list', []) if isinstance(data, dict) else []
+    if accounts:
+        return str(accounts[0].get('id', ''))
+    return None
+
+
+def show_new_holdings(client: YJBClient, account_id: Optional[str] = None):
+    """新接口：基金持仓（需要先用 fund/batch 补名称/净值）"""
+    print("\n💼 新接口基金持仓")
+    print("-" * 60)
+    try:
+        if not account_id:
+            account_id = _new_first_account_id(client)
+            if not account_id:
+                print("暂无账户")
+                return
+
+        holdings_data = client.get(f'/position/v1/static/fund-accounts/{account_id}/funds')
+        holdings = holdings_data.get('list', []) if isinstance(holdings_data, dict) else []
+        if not holdings:
+            print("暂无持仓")
+            return
+
+        fund_ids = [h.get('fund_id') for h in holdings if h.get('fund_id')]
+        fund_map = {}
+        if fund_ids:
+            batch_data = client.post('/market/v1/fund/batch', json={
+                "funds": [{"fund_id": fid, "data_source": "1"} for fid in fund_ids]
+            })
+            if isinstance(batch_data, list):
+                fund_map = {item.get('fund_id'): item for item in batch_data}
+
+        print(f"{'代码':<10s} {'名称':<30s} {'持有份额':<12s} {'市值':<12s} {'持有收益':<12s}")
+        print("-" * 80)
+        for h in holdings:
+            fund_id = h.get('fund_id')
+            info = fund_map.get(fund_id, {})
+            code = info.get('code', str(fund_id))
+            name = info.get('short_name', 'N/A')
+            shares = h.get('hold_share', 'N/A')
+            money = h.get('money', 'N/A')
+            earn = h.get('hold_earn', 'N/A')
+            print(f"{code:<10s} {name:<30s} {shares:<12} {money:<12} {earn:<12}")
+    except Exception as e:
+        print(f"获取持仓失败: {e}")
+
+
+def show_new_fund_detail(client: YJBClient, fund_id: str):
+    """新接口：基金详情/概览/关联/重仓"""
+    print(f"\n🔎 新接口基金详情: {fund_id}")
+    print("-" * 60)
+    try:
+        overview = client.get(f'/market/v1/fund/overview?data_source=1&fund_id={fund_id}')
+        print("📌 概览")
+        print(json.dumps(overview, ensure_ascii=False, indent=2)[:2000])
+
+        detail = client.get(f'/users/v1/fund/detail?fund_id={fund_id}')
+        print("\n📌 用户相关")
+        print(json.dumps(detail, ensure_ascii=False, indent=2)[:1000])
+
+        relation = client.post('/market/v1/fund/relation-and-rank', json={"fund_id": int(fund_id)})
+        print("\n📌 关联/排名")
+        print(json.dumps(relation, ensure_ascii=False, indent=2)[:1500])
+
+        hold_stock = client.get(f'/position/v1/static/fund/hold-stock?fund_id={fund_id}&page=1&per_page=10')
+        print("\n📌 重仓股")
+        print(json.dumps(hold_stock, ensure_ascii=False, indent=2)[:2000])
+    except Exception as e:
+        print(f"获取基金详情失败: {e}")
+
+
+def show_new_market_ranking(client: YJBClient):
+    """新接口：市场排行"""
+    print("\n🏆 新接口市场排行")
+    print("-" * 60)
+    try:
+        data = client.get('/market/v1/market-ranking/list')
+        print(json.dumps(data, ensure_ascii=False, indent=2)[:3000])
+    except Exception as e:
+        print(f"获取市场排行失败: {e}")
+
+
+def show_new_fund_groups(client: YJBClient):
+    """新接口：基金分组"""
+    print("\n🗂️ 新接口基金分组")
+    print("-" * 60)
+    try:
+        data = client.get('/users/v1/fund-group')
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+    except Exception as e:
+        print(f"获取基金分组失败: {e}")
+
+
+def show_new_stock_penetrate(client: YJBClient, account_id: Optional[str] = None):
+    """新接口：股票穿透持仓"""
+    print("\n📊 新接口股票穿透持仓")
+    print("-" * 60)
+    try:
+        if not account_id:
+            account_id = _new_first_account_id(client)
+            if not account_id:
+                print("暂无账户")
+                return
+
+        overview = client.get(f'/position/v1/penetrate/hold/stock-overview?account_id={account_id}')
+        print("📌 汇总")
+        print(json.dumps(overview, ensure_ascii=False, indent=2))
+
+        stocks = client.get(f'/position/v1/penetrate/hold/accounts/{account_id}/stocks')
+        print("\n📌 明细")
+        if isinstance(stocks, list):
+            for s in stocks:
+                code = s.get('stock_code', 'N/A')
+                name = s.get('stock_name', 'N/A')
+                price = s.get('last_price', 'N/A')
+                change = s.get('daily_change', 'N/A')
+                ratio = s.get('holding_percentage', 'N/A')
+                print(f"{code:10s} {name:20s} 价格:{price:<10} 涨跌:{change:<8} 占比:{ratio}%")
+        else:
+            print(json.dumps(stocks, ensure_ascii=False, indent=2)[:2000])
+    except Exception as e:
+        print(f"获取股票穿透持仓失败: {e}")
+
+
+def show_new_all_hold_simple(client: YJBClient):
+    """新接口：全部持仓/自选简易列表"""
+    print("\n📦 新接口持仓/自选简易列表")
+    print("-" * 60)
+    try:
+        hold = client.get('/position/v1/user/funds/all-hold/simple')
+        print("持仓：")
+        print(json.dumps(hold, ensure_ascii=False, indent=2)[:2000])
+
+        optional = client.get('/position/v1/user/funds/all-optional/simple')
+        print("\n自选：")
+        print(json.dumps(optional, ensure_ascii=False, indent=2)[:2000])
+    except Exception as e:
+        print(f"获取持仓/自选列表失败: {e}")
+
+
+def show_new_etf_ranking(client: YJBClient):
+    """新接口：ETF 排行"""
+    print("\n🏆 新接口 ETF 排行")
+    print("-" * 60)
+    try:
+        data = client.get('/market/v1/market-ranking/etf-ranking')
+        print(json.dumps(data, ensure_ascii=False, indent=2)[:3000])
+    except Exception as e:
+        print(f"获取 ETF 排行失败: {e}")
+
+
+def show_new_theme_ranking(client: YJBClient):
+    """新接口：板块排行"""
+    print("\n🏆 新接口板块排行")
+    print("-" * 60)
+    try:
+        data = client.get('/market/v1/market-ranking/theme-ranking')
+        print(json.dumps(data, ensure_ascii=False, indent=2)[:3000])
+    except Exception as e:
+        print(f"获取板块排行失败: {e}")
+
+
+def show_new_fund_nav(client: YJBClient, fund_id: str):
+    """新接口：基金历史净值"""
+    print(f"\n📈 基金历史净值: {fund_id}")
+    print("-" * 60)
+    try:
+        data = client.get(f'/market/v1/fund-nav/fund-history-nav?fund_id={fund_id}')
+        print(json.dumps(data, ensure_ascii=False, indent=2)[:3000])
+    except Exception as e:
+        print(f"获取历史净值失败: {e}")
+
+
+def show_new_fund_rate(client: YJBClient, fund_id: str):
+    """新接口：基金实时涨幅"""
+    print(f"\n📈 基金实时涨幅: {fund_id}")
+    print("-" * 60)
+    try:
+        data = client.get(f'/market/v1/fund/increase-rate?fund_id={fund_id}')
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+    except Exception as e:
+        print(f"获取基金涨幅失败: {e}")
+
+
+def show_new_fund_gz(client: YJBClient, fund_id: str):
+    """新接口：基金估值数据"""
+    print(f"\n📈 基金估值: {fund_id}")
+    print("-" * 60)
+    try:
+        data = client.get(f'/market/v1/fund/gz-data?fund_id={fund_id}&source=1')
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+    except Exception as e:
+        print(f"获取基金估值失败: {e}")
+
+
+def show_new_profit_analysis(client: YJBClient):
+    """新接口：持仓行业收益分析"""
+    print("\n📊 新接口持仓行业分析")
+    print("-" * 60)
+    try:
+        data = client.get('/position/v1/profit-analysis/position-sector')
+        print(json.dumps(data, ensure_ascii=False, indent=2)[:3000])
+    except Exception as e:
+        print(f"获取行业分析失败: {e}")
+
+
+def show_version_info(client: YJBClient):
+    """显示插件/接口版本信息"""
+    print("\n📦 版本信息")
+    print("-" * 60)
+
+    try:
+        data = client.get('/version_info')
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+    except Exception as e:
+        print(f"获取版本信息失败: {e}")
+
+
+def add_holdings(client: YJBClient, payload: Dict[str, Any]):
+    """导入/新增持仓（POST /fund_hold）"""
+    print("\n➕ 导入基金持仓")
+    print("-" * 60)
+
+    try:
+        account_id = payload.get('account_id')
+        items = payload.get('items', [])
+        if not account_id or not items:
+            print("错误：需要提供 account_id 和 items")
+            return
+
+        # 和插件保持一致的请求体结构
+        body = {
+            "items": items,
+            "account_id": int(account_id),
+            "sync_optional": payload.get("sync_optional", 0),
+        }
+        data = client.post('/fund_hold', json=body)
+        print("导入成功：")
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+    except Exception as e:
+        print(f"导入持仓失败: {e}")
+
+
+def remove_holdings(client: YJBClient, payload: Dict[str, Any]):
+    """删除持仓（DELETE /remove_fund_hold）"""
+    print("\n➖ 删除基金持仓")
+    print("-" * 60)
+
+    try:
+        account_id = payload.get('account_id')
+        fund_ids = payload.get('fund_ids', [])
+        if not account_id or not fund_ids:
+            print("错误：需要提供 account_id 和 fund_ids")
+            return
+
+        query = "?" + "&".join([f"fund_ids[]={fid}" for fid in fund_ids])
+        query += f"&account_id={account_id}"
+        data = client.request('DELETE', f'/remove_fund_hold{query}')
+        print("删除成功：")
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+    except Exception as e:
+        print(f"删除持仓失败: {e}")
+
+
+def parse_json_arg(raw: str) -> Dict[str, Any]:
+    """解析命令行传入的 JSON 字符串"""
+    try:
+        return json.loads(raw)
+    except Exception as e:
+        print(f"错误：JSON 解析失败: {e}")
+        sys.exit(1)
+
+
 # 命令行入口
 def main():
     """主函数"""
     parser = argparse.ArgumentParser(description='养基宝命令行工具')
-    parser.add_argument('--login', action='store_true', help='重新登录')
-    parser.add_argument('--search', type=str, metavar='KEYWORD', help='搜索基金')
-    parser.add_argument('--accounts', action='store_true', help='列出所有账户')
-    parser.add_argument('--holdings', type=str, metavar='ID', help='查看账户持仓')
+    parser.add_argument('--api', choices=['old', 'new'], default='old', help='选择接口：old=老插件接口（默认），new=App新接口')
+    parser.add_argument('--login', action='store_true', help='重新登录（老接口二维码）')
+    parser.add_argument('--sms-login', type=str, metavar='PHONE', help='新接口手机验证码登录')
+    parser.add_argument('--search', type=str, metavar='KEYWORD', help='搜索基金（老接口）')
+    parser.add_argument('--accounts', action='store_true', help='列出所有账户（老接口）')
+    parser.add_argument('--holdings', type=str, metavar='ID', help='查看账户持仓（老接口）')
     parser.add_argument('--income-chart', action='store_true', help='查看收益曲线')
     parser.add_argument('--income-data', type=str, nargs='?', const='', metavar='ID', help='查看收益数据（不指定ID则查看汇总）')
     parser.add_argument('--notice', action='store_true', help='查看系统公告')
+    parser.add_argument('--version-info', action='store_true', help='查看版本信息（老接口）')
+    parser.add_argument('--add-holdings', type=str, metavar='JSON', help='导入持仓（老接口），JSON 格式：{"account_id":123,"items":[{"fund_id":1058,"fund_code":"501060","hold_share":100,"hold_cost":1.0}]}')
+    parser.add_argument('--remove-holdings', type=str, metavar='JSON', help='删除持仓（老接口），JSON 格式：{"account_id":123,"fund_ids":[1058,21778]}')
+
+    # 新接口（app-api）命令
+    parser.add_argument('--new-user', action='store_true', help='新接口：用户信息')
+    parser.add_argument('--new-accounts', action='store_true', help='新接口：基金账户列表')
+    parser.add_argument('--new-index', action='store_true', help='新接口：指数行情')
+    parser.add_argument('--new-search', type=str, metavar='KEYWORD', help='新接口：搜索基金')
+    parser.add_argument('--new-holdings', type=str, nargs='?', const='', metavar='ACCOUNT_ID', help='新接口：基金持仓（不指定ID则用第一个账户）')
+    parser.add_argument('--new-fund-detail', type=str, metavar='FUND_ID', help='新接口：基金详情/概览/重仓')
+    parser.add_argument('--new-market-ranking', action='store_true', help='新接口：市场排行')
+    parser.add_argument('--new-fund-groups', action='store_true', help='新接口：基金分组')
+    parser.add_argument('--new-stock-penetrate', type=str, nargs='?', const='', metavar='ACCOUNT_ID', help='新接口：股票穿透持仓')
+    parser.add_argument('--new-all-hold', action='store_true', help='新接口：全部持仓/自选简易列表')
+    parser.add_argument('--new-etf-ranking', action='store_true', help='新接口：ETF排行')
+    parser.add_argument('--new-theme-ranking', action='store_true', help='新接口：板块排行')
+    parser.add_argument('--new-fund-nav', type=str, metavar='FUND_ID', help='新接口：基金历史净值')
+    parser.add_argument('--new-fund-rate', type=str, metavar='FUND_ID', help='新接口：基金实时涨幅')
+    parser.add_argument('--new-fund-gz', type=str, metavar='FUND_ID', help='新接口：基金估值')
+    parser.add_argument('--new-profit-analysis', action='store_true', help='新接口：持仓行业分析')
+
     parser.add_argument('--debug', action='store_true', help='显示详细调试信息')
 
     args = parser.parse_args()
@@ -518,15 +942,18 @@ def main():
     if args.login:
         qrcode_login(debug=args.debug)
         return
+    if args.sms_login:
+        sms_login(args.sms_login, debug=args.debug)
+        return
 
     # 检查 token
     token = load_token()
     if not token:
-        print("未登录，请先运行：python3 yjb_tool.py --login")
+        print("未登录，请先运行：python3 yjb_tool.py --login 或 python3 yjb_tool.py --sms-login 手机号")
         sys.exit(1)
 
     # 创建客户端
-    client = YJBClient(token=token, debug=args.debug)
+    client = YJBClient(token=token, debug=args.debug, api=args.api)
 
     # 执行功能
     try:
@@ -542,14 +969,52 @@ def main():
             show_income_data(client, args.income_data if args.income_data else None)
         elif args.notice:
             show_notice(client)
+        elif args.version_info:
+            show_version_info(client)
+        elif args.add_holdings:
+            add_holdings(client, parse_json_arg(args.add_holdings))
+        elif args.remove_holdings:
+            remove_holdings(client, parse_json_arg(args.remove_holdings))
+        elif args.new_user:
+            show_new_user(client)
+        elif args.new_accounts:
+            show_new_accounts(client)
+        elif args.new_index:
+            show_new_index(client)
+        elif args.new_search:
+            show_new_search_fund(client, args.new_search)
+        elif args.new_holdings is not None:
+            show_new_holdings(client, args.new_holdings if args.new_holdings else None)
+        elif args.new_fund_detail:
+            show_new_fund_detail(client, args.new_fund_detail)
+        elif args.new_market_ranking:
+            show_new_market_ranking(client)
+        elif args.new_fund_groups:
+            show_new_fund_groups(client)
+        elif args.new_stock_penetrate is not None:
+            show_new_stock_penetrate(client, args.new_stock_penetrate if args.new_stock_penetrate else None)
+        elif args.new_all_hold:
+            show_new_all_hold_simple(client)
+        elif args.new_etf_ranking:
+            show_new_etf_ranking(client)
+        elif args.new_theme_ranking:
+            show_new_theme_ranking(client)
+        elif args.new_fund_nav:
+            show_new_fund_nav(client, args.new_fund_nav)
+        elif args.new_fund_rate:
+            show_new_fund_rate(client, args.new_fund_rate)
+        elif args.new_fund_gz:
+            show_new_fund_gz(client, args.new_fund_gz)
+        elif args.new_profit_analysis:
+            show_new_profit_analysis(client)
         else:
-            # 默认显示仪表盘
+            # 默认显示仪表盘（老接口）
             show_dashboard(client)
 
     except Exception as e:
         print(f"\n错误: {e}")
         if "未授权" in str(e) or "401" in str(e):
-            print("Token 可能已过期，请重新登录：python3 yjb_tool.py --login")
+            print("Token 可能已过期，请重新登录：python3 yjb_tool.py --login 或 python3 yjb_tool.py --sms-login 手机号")
         sys.exit(1)
 
 

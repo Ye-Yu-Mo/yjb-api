@@ -4,14 +4,17 @@
 
 ## 功能特性
 
-- 二维码登录
+- 同时支持老接口和 App 新接口，可通过 `--api` 切换
+- 老接口：二维码登录
+- 新接口：手机验证码登录
 - 自动保存和加载 Token
 - 查看账户收益仪表盘
-- 搜索基金
+- 搜索基金（老/新接口都支持）
 - 查看账户列表
 - 查看基金持仓
 - 查看收益曲线
 - 查看系统公告
+- 新接口：基金详情、市场排行、ETF/板块排行、股票穿透持仓、基金分组、持仓行业分析等
 
 ## 安装依赖
 
@@ -91,16 +94,159 @@ python3 yjb_tool.py --income-chart
 python3 yjb_tool.py --notice
 ```
 
+### 8. 查看版本信息
+
+```bash
+python3 yjb_tool.py --version-info
+```
+
+### 9. 导入持仓
+
+```bash
+python3 yjb_tool.py --add-holdings '{"account_id":123,"items":[{"fund_id":1058,"fund_code":"501060","hold_share":100,"hold_cost":1.0}]}'
+```
+
+### 10. 删除持仓
+
+```bash
+python3 yjb_tool.py --remove-holdings '{"account_id":123,"fund_ids":[1058,21778]}'
+```
+
+## 双 API 支持
+
+本工具同时支持两套接口，可通过 `--api` 切换：
+
+```bash
+# 老接口（默认，稳定）
+python3 yjb_tool.py --api old --accounts
+
+# 新接口 App API
+python3 yjb_tool.py --api new --new-user
+```
+
+- 老接口：`http://browser-plug-api.yangjibao.com`
+- 新接口：`https://app-api.yangjibao.com`
+
+新接口中部分需要 App 端 secret 的接口暂时还不能稳定调用，详见 `API.md`。
+
+## 新接口（App API）命令
+
+### 手机验证码登录
+
+```bash
+python3 yjb_tool.py --sms-login 18012345678
+```
+
+### 用户信息
+
+```bash
+python3 yjb_tool.py --api new --new-user
+```
+
+### 账户列表
+
+```bash
+python3 yjb_tool.py --api new --new-accounts
+```
+
+### 指数行情
+
+```bash
+python3 yjb_tool.py --api new --new-index
+```
+
+### 搜索基金
+
+```bash
+python3 yjb_tool.py --api new --new-search 110011
+```
+
+### 基金持仓
+
+```bash
+# 使用第一个账户
+python3 yjb_tool.py --api new --new-holdings
+
+# 指定账户
+python3 yjb_tool.py --api new --new-holdings 18584587
+```
+
+### 基金详情/重仓
+
+```bash
+python3 yjb_tool.py --api new --new-fund-detail 1058
+```
+
+### 市场/ETF/板块排行
+
+```bash
+python3 yjb_tool.py --api new --new-market-ranking
+python3 yjb_tool.py --api new --new-etf-ranking
+python3 yjb_tool.py --api new --new-theme-ranking
+```
+
+### 基金分组、自选/持仓简易列表
+
+```bash
+python3 yjb_tool.py --api new --new-fund-groups
+python3 yjb_tool.py --api new --new-all-hold
+```
+
+### 股票穿透持仓
+
+```bash
+python3 yjb_tool.py --api new --new-stock-penetrate
+```
+
+### 基金历史净值/实时涨幅/估值
+
+```bash
+python3 yjb_tool.py --api new --new-fund-nav 1058
+python3 yjb_tool.py --api new --new-fund-rate 1058
+python3 yjb_tool.py --api new --new-fund-gz 1058
+```
+
+### 持仓行业分析
+
+```bash
+python3 yjb_tool.py --api new --new-profit-analysis
+```
+
 ## 命令行参数
 
 ```
---login              重新登录
---search KEYWORD     搜索基金
---accounts           列出所有账户
---holdings ID        查看账户持仓
---income-chart       查看收益曲线
---notice             查看系统公告
---debug              显示详细调试信息
+--api {old,new}       选择接口，默认 old
+--login               老接口二维码登录
+--sms-login PHONE     新接口手机验证码登录
+--search KEYWORD      搜索基金（老接口）
+--accounts            列出所有账户（老接口）
+--holdings ID         查看账户持仓（老接口）
+--income-chart        查看收益曲线
+--income-data [ID]    查看收益数据
+--notice              查看系统公告
+--version-info        查看版本信息（老接口）
+--add-holdings JSON   导入持仓（老接口）
+--remove-holdings JSON 删除持仓（老接口）
+
+# 新接口命令
+--new-user            用户信息
+--new-accounts        基金账户列表
+--new-index           指数行情
+--new-search KEYWORD  搜索基金
+--new-holdings [ID]   基金持仓
+--new-fund-detail ID  基金详情
+--new-market-ranking  市场排行
+--new-fund-groups     基金分组
+--new-stock-penetrate [ID] 股票穿透持仓
+--new-all-hold        持仓/自选简易列表
+--new-etf-ranking     ETF排行
+--new-theme-ranking   板块排行
+--new-fund-nav ID     历史净值
+--new-fund-rate ID    实时涨幅
+--new-fund-gz ID      基金估值
+--new-profit-analysis 持仓行业分析
+
+--debug               显示详细调试信息
 ```
 
 ## 故障排查
@@ -152,14 +298,18 @@ python3 yjb_tool.py --login
 ## 注意事项
 
 1. Token 保存在 `~/.yjb_token.json`，请妥善保管
-2. 首次使用需要使用养基宝APP扫码登录
-3. 如果 Token 过期，使用 `--login` 重新登录
+2. 老接口首次使用使用养基宝APP扫码登录：`python3 yjb_tool.py --login`
+3. 新接口使用手机验证码登录：`python3 yjb_tool.py --sms-login 手机号`
+4. 如果 Token 过期，根据接口选择重新登录
+5. 新接口部分严格验签接口需要 App 端 secret，当前版本先保留老接口作为 backup，详见 `API.md`
 
 ## API 说明
 
-本工具使用养基宝官方API：
-- Base URL: `http://browser-plug-api.yangjibao.com`
+本工具支持两套养基宝 API：
+- 老接口：`http://browser-plug-api.yangjibao.com`
+- 新接口：`https://app-api.yangjibao.com`
 - 所有请求需要签名验证
+- 完整接口状态和签名说明见 [API.md](API.md)
 
 ## 许可证
 

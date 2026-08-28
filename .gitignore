@@ -1,0 +1,4 @@
+*.app
+Raw_*
+*.xpi
+.DS_Store
