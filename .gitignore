@@ -1,4 +1,5 @@
 *.app
+*.ipa
 Raw_*
 *.xpi
 .DS_Store

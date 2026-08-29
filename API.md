@@ -36,31 +36,51 @@ Token 统一保存在 `~/.yjb_token.json`：
 
 ## 3. 签名算法
 
-当前已知的老接口/插件签名：
+### 老接口
 
 ```text
 sign_str = API路径 + token + 时间戳 + SECRET
 Request-Sign = md5(sign_str)
 ```
 
+老接口 secret：
+
+```text
+YxmKSrQR4uoJ5lOoWIhcbd7SlUEh9OOc
+```
+
+### 新接口（App API）
+
+从 `com.xiaoduotou.yjb_2.0.6_und3fined.ipa`（已解密）逆向得到：
+
+```text
+sign_str = https://app-api.yangjibao.com + API路径 + token + SECRET + 时间戳
+Request-Sign = md5(sign_str)
+```
+
+新接口 secret：
+
+```text
+Zk0w9mX7IKFGo5qp5jyDwJKnU7ZJZZJwGhs5myg4vlv4lKEHFKxGe6jlb84KOLkx
+```
+
 示例：
 
 ```text
-GET /users/v1/account
+GET /account_collect
 token = a29c...
-timestamp = 1787921144
-secret = YxmKSrQR4uoJ5lOoWIhcbd7SlUEh9OOc
+timestamp = 1787921148
+secret = Zk0w9mX7IKFGo5qp5jyDwJKnU7ZJZZJwGhs5myg4vlv4lKEHFKxGe6jlb84KOLkx
 
-sign_str = /users/v1/accounta29c...1787921144YxmKSrQR4uoJ5lOoWIhcbd7SlUEh9OOc
+sign_str = https://app-api.yangjibao.com/account_collecta29c...Zk0w9mX7IKFGo5qp5jyDwJKnU7ZJZZJwGhs5myg4vlv4lKEHFKxGe6jlb84KOLkx1787921148
 Request-Sign = md5(sign_str)
 ```
 
 注意：
 
 - 签名时只取路径部分，不带 query。
-- 新接口部分接口会严格校验签名，目前旧 secret 在这些接口上返回 `401 非法请求`。
-- App 包当前是加密状态（`cryptid=1`），暂时无法直接读取 App 端 secret。
-- 等拿到脱壳后的 App 后，需要确认新接口 secret/算法是否变化。
+- 新接口签名包含完整 URL（scheme + host + path）。
+- 新接口 secret 已从 2.0.6 解包 IPA 中提取，严格验签接口现已可调用。
 
 ## 4. 老接口端点（browser-plug-api）
 
@@ -102,8 +122,8 @@ Request-Sign = md5(sign_str)
 | GET | `/market/v1/market-ranking/etf-ranking` | ETF 排行 | ✅ 可用 |
 | GET | `/market/v1/market-ranking/theme-ranking` | 板块排行 | ✅ 可用 |
 | GET | `/fund_source_list` | 基金来源列表 | ✅ 可用 |
-| GET | `/fund_up_down_distribution` | 涨跌分布 | ⏳ 需要新 secret |
-| GET | `/market_buy_ranking` | 买入排行 | ⏳ 需要新 secret |
+| GET | `/fund_up_down_distribution` | 涨跌分布 | ✅ 可用 |
+| GET | `/market_buy_ranking` | 买入排行 | ✅ 可用 |
 
 ### 5.3 基金
 
@@ -122,9 +142,9 @@ Request-Sign = md5(sign_str)
 | GET | `/market/v1/fund/gz-data` | 基金估值 | ✅ 可用 |
 | GET | `/position/v1/user/funds/all-hold/simple` | 全部持仓简易列表 | ✅ 可用 |
 | GET | `/position/v1/user/funds/all-optional/simple` | 全部自选简易列表 | ✅ 可用 |
-| GET | `/account_collect` | 收益汇总 | ⏳ 需要新 secret |
-| GET | `/income_line_data` | 收益曲线 | ⏳ 需要新 secret |
-| GET | `/inner_notice` | 公告 | ⏳ 需要新 secret |
+| GET | `/account_collect` | 收益汇总 | ✅ 可用 |
+| GET | `/income_line_data` | 收益曲线 | ✅ 可用 |
+| GET | `/inner_notice` | 公告 | ✅ 可用 |
 
 ### 5.4 股票
 
@@ -133,11 +153,11 @@ Request-Sign = md5(sign_str)
 | GET | `/position/v1/penetrate/hold/stock-overview` | 股票穿透汇总 | ✅ 可用 |
 | GET | `/position/v1/penetrate/hold/accounts/{id}/stocks` | 股票穿透明细 | ✅ 可用 |
 | GET | `/position/v1/profit-analysis/position-sector` | 持仓行业分析 | ✅ 可用 |
-| GET | `/stock_account` | 股票账户 | ⏳ 需要新 secret |
-| GET | `/stock_account_collect` | 股票收益汇总 | ⏳ 需要新 secret |
-| GET | `/stock_hold` | 股票持仓 | ⏳ 需要新 secret |
-| GET | `/stock_income_line_data` | 股票收益曲线 | ⏳ 需要新 secret |
-| GET | `/stock_optional` | 股票自选 | ⏳ 需要新 secret |
+| GET | `/stock_account` | 股票账户 | ✅ 可用 |
+| GET | `/stock_account_collect` | 股票收益汇总 | ✅ 可用 |
+| GET | `/stock_hold` | 股票持仓 | ✅ 可用 |
+| GET | `/stock_income_line_data` | 股票收益曲线 | ✅ 可用 |
+| GET | `/stock_optional` | 股票自选 | ✅ 可用 |
 
 ### 5.5 自选/达人（部分可用）
 
@@ -161,8 +181,6 @@ App 包里还能提取到大量接口，例如：
 - 用户/客服：`/users/v1/customer-service-chats/identity`、`/users/v1/message/read`
 - 股票：`/stock/v1/index-search/search`、`/stock/v1/relation-index/query-batch`、`/stock/v1/relation-index/default-list`
 
-完整列表可参考 `/tmp/yjb_app_endpoints.txt`（当前环境临时文件，后续可整理进仓库）。
-
 ## 6. CLI 对应关系
 
 | CLI | 接口 | 说明 |
@@ -178,11 +196,12 @@ App 包里还能提取到大量接口，例如：
 | `--api new --new-market-ranking` | `GET /market/v1/market-ranking/list` | 市场排行 |
 | `--api new --new-etf-ranking` | `GET /market/v1/market-ranking/etf-ranking` | ETF 排行 |
 | `--api new --new-theme-ranking` | `GET /market/v1/market-ranking/theme-ranking` | 板块排行 |
-
-## 7. 待办
-
-- [ ] 获取脱壳后的 App 可执行文件
-- [ ] 逆向确认新接口签名 secret/算法
-- [ ] 接入严格验签接口：`/account_collect`、`/income_line_data`、`/inner_notice`、`/stock_*`
-- [ ] 将 App 中发现的更多接口逐步加入 CLI
-- [ ] 整理完整接口清单到仓库（如 `docs/endpoints.json`）
+| `--api new --new-account-collect` | `GET /account_collect` | 基金收益汇总 |
+| `--api new --new-income-chart [ID]` | `GET /income_line_data` | 基金收益曲线 |
+| `--api new --new-notice [PID]` | `GET /inner_notice` | 公告 |
+| `--api new --new-stock-accounts` | `GET /stock_account` | 股票账户 |
+| `--api new --new-stock-collect` | `GET /stock_account_collect` | 股票收益汇总 |
+| `--api new --new-stock-holdings [ID]` | `GET /stock_hold` | 股票持仓 |
+| `--api new --new-stock-income [ID]` | `GET /stock_income_line_data` | 股票收益曲线 |
+| `--api new --new-stock-optional` | `GET /stock_optional` | 股票自选 |
+| `--api new --new-fund-distribution` | `GET /fund_up_down_distribution` | 基金涨跌分布 |

@@ -27,8 +27,8 @@ NEW_API_BASE = "https://app-api.yangjibao.com"
 # 默认 API，保留老接口作为 backup
 API_BASE = OLD_API_BASE
 SECRET = "YxmKSrQR4uoJ5lOoWIhcbd7SlUEh9OOc"
-# 新接口 secret 暂用同一个，等解包后如果不同再替换
-NEW_SECRET = SECRET
+# 新接口 secret，已从 2.0.6 解包 IPA 中逆向得到
+NEW_SECRET = "Zk0w9mX7IKFGo5qp5jyDwJKnU7ZJZZJwGhs5myg4vlv4lKEHFKxGe6jlb84KOLkx"
 TOKEN_FILE = Path.home() / ".yjb_token.json"
 
 
@@ -61,15 +61,22 @@ def save_token(token: str):
 
 
 # API 签名
-def generate_sign(path: str, token: str, timestamp: int, secret: str = SECRET) -> str:
-    """生成 API 签名"""
+def generate_sign(path: str, token: str, timestamp: int, secret: str = SECRET, api: str = "old") -> str:
+    """生成 API 签名
+
+    老接口：md5(path + token + timestamp + secret)
+    新接口：md5(full_url + token + secret + timestamp)
+    """
     pathname = ""  # API base 的路径部分，这里是空字符串
     token = token or ""
 
     # 如果 path 包含查询参数，签名时只用路径部分
     sign_path = path.split('?')[0] if '?' in path else path
 
-    sign_str = pathname + sign_path + token + str(timestamp) + secret
+    if api == "new":
+        sign_str = NEW_API_BASE + sign_path + token + secret + str(timestamp)
+    else:
+        sign_str = pathname + sign_path + token + str(timestamp) + secret
     return hashlib.md5(sign_str.encode()).hexdigest()
 
 
@@ -92,7 +99,7 @@ class YJBClient:
         url = self.base + path
         timestamp = int(time.time())
         secret = SECRET if self.api == "old" else NEW_SECRET
-        sign = generate_sign(path, self.token, timestamp, secret)
+        sign = generate_sign(path, self.token, timestamp, secret, self.api)
 
         # App 新接口的 Authorization 是 ios:token，老接口是纯 token
         auth_value = f"ios:{self.token}" if self.api == "new" else self.token
@@ -832,6 +839,140 @@ def show_new_profit_analysis(client: YJBClient):
         print(f"获取行业分析失败: {e}")
 
 
+def show_new_account_collect(client: YJBClient):
+    """新接口：基金收益汇总"""
+    print("\n💰 新接口基金收益汇总")
+    print("-" * 60)
+    try:
+        data = client.get('/account_collect')
+        print(f"总资产: {data.get('assets_collect', 'N/A')}")
+        print(f"今日收益: {data.get('today_income', 'N/A')}")
+        account_data = data.get('account_data', [])
+        if isinstance(account_data, list):
+            for acc in account_data:
+                print(f"  {acc.get('title')}: 收益 {acc.get('today_income')}  收益率 {acc.get('today_income_rate')}  资产 {acc.get('account_assets')}")
+        else:
+            print(json.dumps(data, ensure_ascii=False, indent=2))
+    except Exception as e:
+        print(f"获取收益汇总失败: {e}")
+
+
+def show_new_income_chart(client: YJBClient, account_id: Optional[str] = None):
+    """新接口：基金收益曲线"""
+    print("\n📈 新接口基金收益曲线")
+    print("-" * 60)
+    try:
+        if not account_id:
+            account_id = _new_first_account_id(client)
+            if not account_id:
+                print("暂无账户")
+                return
+        path = f"/income_line_data?account_ids%5B%5D={account_id}&collect=0&date_type=day"
+        data = client.get(path)
+        if isinstance(data, dict):
+            for aid, item in data.items():
+                print(f"账户 {aid}: 日期 {item.get('day')}")
+                line_list = item.get('line_list', [])
+                for p in line_list[::60]:
+                    print(f"  {p.get('time')}  {p.get('rate')}")
+        else:
+            print(json.dumps(data, ensure_ascii=False, indent=2))
+    except Exception as e:
+        print(f"获取收益曲线失败: {e}")
+
+
+def show_new_notice(client: YJBClient, product_id: str = "1058", product_type: str = "1"):
+    """新接口：公告"""
+    print("\n📢 新接口公告")
+    print("-" * 60)
+    try:
+        data = client.get(f'/inner_notice?product_id={product_id}&product_type={product_type}')
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+    except Exception as e:
+        print(f"获取公告失败: {e}")
+
+
+def show_new_stock_accounts(client: YJBClient):
+    """新接口：股票账户列表"""
+    print("\n📋 新接口股票账户")
+    print("-" * 60)
+    try:
+        data = client.get('/stock_account')
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+    except Exception as e:
+        print(f"获取股票账户失败: {e}")
+
+
+def show_new_stock_collect(client: YJBClient):
+    """新接口：股票收益汇总"""
+    print("\n💰 新接口股票收益汇总")
+    print("-" * 60)
+    try:
+        data = client.get('/stock_account_collect')
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+    except Exception as e:
+        print(f"获取股票收益汇总失败: {e}")
+
+
+def show_new_stock_holdings(client: YJBClient, account_id: Optional[str] = None):
+    """新接口：股票持仓"""
+    print("\n💼 新接口股票持仓")
+    print("-" * 60)
+    try:
+        if not account_id:
+            data = client.get('/stock_account')
+            accounts = data.get('list', []) if isinstance(data, dict) else []
+            if not accounts:
+                print("暂无股票账户")
+                return
+            account_id = str(accounts[0].get('id', ''))
+        data = client.get(f'/stock_hold?account_id={account_id}')
+        print(json.dumps(data, ensure_ascii=False, indent=2)[:3000])
+    except Exception as e:
+        print(f"获取股票持仓失败: {e}")
+
+
+def show_new_stock_income(client: YJBClient, account_id: Optional[str] = None):
+    """新接口：股票收益曲线"""
+    print("\n📈 新接口股票收益曲线")
+    print("-" * 60)
+    try:
+        if not account_id:
+            data = client.get('/stock_account')
+            accounts = data.get('list', []) if isinstance(data, dict) else []
+            if not accounts:
+                print("暂无股票账户")
+                return
+            account_id = str(accounts[0].get('id', ''))
+        path = f"/stock_income_line_data?account_ids%5B%5D={account_id}"
+        data = client.get(path)
+        print(json.dumps(data, ensure_ascii=False, indent=2)[:3000])
+    except Exception as e:
+        print(f"获取股票收益曲线失败: {e}")
+
+
+def show_new_stock_optional(client: YJBClient):
+    """新接口：股票自选"""
+    print("\n⭐ 新接口股票自选")
+    print("-" * 60)
+    try:
+        data = client.get('/stock_optional?group_id=0')
+        print(json.dumps(data, ensure_ascii=False, indent=2)[:3000])
+    except Exception as e:
+        print(f"获取股票自选失败: {e}")
+
+
+def show_new_fund_distribution(client: YJBClient):
+    """新接口：基金涨跌分布"""
+    print("\n📊 新接口基金涨跌分布")
+    print("-" * 60)
+    try:
+        data = client.get('/fund_up_down_distribution')
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+    except Exception as e:
+        print(f"获取涨跌分布失败: {e}")
+
+
 def show_version_info(client: YJBClient):
     """显示插件/接口版本信息"""
     print("\n📦 版本信息")
@@ -933,6 +1074,15 @@ def main():
     parser.add_argument('--new-fund-rate', type=str, metavar='FUND_ID', help='新接口：基金实时涨幅')
     parser.add_argument('--new-fund-gz', type=str, metavar='FUND_ID', help='新接口：基金估值')
     parser.add_argument('--new-profit-analysis', action='store_true', help='新接口：持仓行业分析')
+    parser.add_argument('--new-account-collect', action='store_true', help='新接口：基金收益汇总')
+    parser.add_argument('--new-income-chart', type=str, nargs='?', const='', metavar='ACCOUNT_ID', help='新接口：基金收益曲线')
+    parser.add_argument('--new-notice', type=str, nargs='?', const='1058', metavar='PRODUCT_ID', help='新接口：公告（默认 product_id=1058）')
+    parser.add_argument('--new-stock-accounts', action='store_true', help='新接口：股票账户')
+    parser.add_argument('--new-stock-collect', action='store_true', help='新接口：股票收益汇总')
+    parser.add_argument('--new-stock-holdings', type=str, nargs='?', const='', metavar='ACCOUNT_ID', help='新接口：股票持仓')
+    parser.add_argument('--new-stock-income', type=str, nargs='?', const='', metavar='ACCOUNT_ID', help='新接口：股票收益曲线')
+    parser.add_argument('--new-stock-optional', action='store_true', help='新接口：股票自选')
+    parser.add_argument('--new-fund-distribution', action='store_true', help='新接口：基金涨跌分布')
 
     parser.add_argument('--debug', action='store_true', help='显示详细调试信息')
 
@@ -1007,6 +1157,24 @@ def main():
             show_new_fund_gz(client, args.new_fund_gz)
         elif args.new_profit_analysis:
             show_new_profit_analysis(client)
+        elif args.new_account_collect:
+            show_new_account_collect(client)
+        elif args.new_income_chart is not None:
+            show_new_income_chart(client, args.new_income_chart if args.new_income_chart else None)
+        elif args.new_notice is not None:
+            show_new_notice(client, args.new_notice)
+        elif args.new_stock_accounts:
+            show_new_stock_accounts(client)
+        elif args.new_stock_collect:
+            show_new_stock_collect(client)
+        elif args.new_stock_holdings is not None:
+            show_new_stock_holdings(client, args.new_stock_holdings if args.new_stock_holdings else None)
+        elif args.new_stock_income is not None:
+            show_new_stock_income(client, args.new_stock_income if args.new_stock_income else None)
+        elif args.new_stock_optional:
+            show_new_stock_optional(client)
+        elif args.new_fund_distribution:
+            show_new_fund_distribution(client)
         else:
             # 默认显示仪表盘（老接口）
             show_dashboard(client)

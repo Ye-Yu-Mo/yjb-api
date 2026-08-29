@@ -127,7 +127,7 @@ python3 yjb_tool.py --api new --new-user
 - 老接口：`http://browser-plug-api.yangjibao.com`
 - 新接口：`https://app-api.yangjibao.com`
 
-新接口中部分需要 App 端 secret 的接口暂时还不能稳定调用，详见 `API.md`。
+新接口签名算法和 secret 已从解包 IPA 中逆向得到，核心接口均可调用，详见 `API.md`。
 
 ## 新接口（App API）命令
 
@@ -212,6 +212,30 @@ python3 yjb_tool.py --api new --new-fund-gz 1058
 python3 yjb_tool.py --api new --new-profit-analysis
 ```
 
+### 基金收益汇总/收益曲线/公告
+
+```bash
+python3 yjb_tool.py --api new --new-account-collect
+python3 yjb_tool.py --api new --new-income-chart
+python3 yjb_tool.py --api new --new-notice
+```
+
+### 股票账户/收益/持仓/自选
+
+```bash
+python3 yjb_tool.py --api new --new-stock-accounts
+python3 yjb_tool.py --api new --new-stock-collect
+python3 yjb_tool.py --api new --new-stock-holdings
+python3 yjb_tool.py --api new --new-stock-income
+python3 yjb_tool.py --api new --new-stock-optional
+```
+
+### 基金涨跌分布
+
+```bash
+python3 yjb_tool.py --api new --new-fund-distribution
+```
+
 ## 命令行参数
 
 ```
@@ -245,6 +269,15 @@ python3 yjb_tool.py --api new --new-profit-analysis
 --new-fund-rate ID    实时涨幅
 --new-fund-gz ID      基金估值
 --new-profit-analysis 持仓行业分析
+--new-account-collect 基金收益汇总
+--new-income-chart [ID] 基金收益曲线
+--new-notice [PRODUCT_ID] 公告
+--new-stock-accounts  股票账户
+--new-stock-collect   股票收益汇总
+--new-stock-holdings [ID] 股票持仓
+--new-stock-income [ID] 股票收益曲线
+--new-stock-optional  股票自选
+--new-fund-distribution 基金涨跌分布
 
 --debug               显示详细调试信息
 ```
@@ -301,7 +334,7 @@ python3 yjb_tool.py --login
 2. 老接口首次使用使用养基宝APP扫码登录：`python3 yjb_tool.py --login`
 3. 新接口使用手机验证码登录：`python3 yjb_tool.py --sms-login 手机号`
 4. 如果 Token 过期，根据接口选择重新登录
-5. 新接口部分严格验签接口需要 App 端 secret，当前版本先保留老接口作为 backup，详见 `API.md`
+5. 当前新接口核心功能均可调用，老接口仍保留作为 backup，详见 `API.md`
 
 ## API 说明
 
